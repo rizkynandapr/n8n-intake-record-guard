@@ -1,0 +1,208 @@
+{
+  "name": "Intake record guard: page a human when an AI intake agent logs an emergency nobody can act on",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Intake record guard\n\nYour AI intake agent (voice, SMS or web form) posts its JSON record here. This workflow checks it before anything else does.\n\n- **Emergency with no callback number or address** → pages a human immediately. This is the one that matters: an escalation nobody can act on.\n- **Any other emergency** → pages a human with the address and callback number.\n- **Missing or placeholder fields** (\"unknown\", \"123 Main St\", \"555-555-5555\") → flags for review.\n- **Everything** → continues to your CRM or sheet.\n\nWhy this exists: https://dev.to/rizkynandapr/8-of-my-ai-agents-30-test-calls-failed-every-one-was-my-fault-3kff\n\n### Setup (2 minutes)\n1. Open **Alert on-call** and paste a Slack incoming webhook URL. (Discord: rename `text` to `content` in the body.)\n2. Replace **Send to your CRM or sheet** with your real destination.\n3. Activate, then POST a test record to the webhook URL (see the note on the right).",
+        "height": 520,
+        "width": 520,
+        "color": 5
+      },
+      "id": "503d59c0-1a9d-48d6-8a08-1eae835b36ce",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -620,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Test it\n\nPOST this to the webhook's test URL. It is the exact record from the article, and it should page you:\n\n```json\n{\n  \"schema_version\": \"1.0\",\n  \"trade\": \"hvac\",\n  \"urgency\": \"emergency\",\n  \"emergency_type\": \"gas\",\n  \"callback_number\": null,\n  \"service_address\": {\"street\": null, \"city\": null, \"postal_code\": null},\n  \"problem_summary\": \"Caller said the furnace isn't working and it smells like eggs downstairs.\",\n  \"outcome\": \"escalated\"\n}\n```\n\nThe webhook replies with `severity` (`page`, `review` or `ok`) and the list of problems, so your agent's platform can log it too.",
+        "height": 520,
+        "width": 460,
+        "color": 7
+      },
+      "id": "c1b5b55d-90ec-4ac3-a8b1-8f3580e1c68d",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "intake-record",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "6bb58dad-6e99-4e37-9afd-1aa2b7a3400c",
+      "name": "Intake record in",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "3711570d-35e6-4e0c-90fd-c67d17938277"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Intake record guard: flags intake records a dispatcher cannot act on.\n// Built for the Dispatch Kit intake schema; works for any record with these field names.\nconst PLACEHOLDERS = new Set([\n  \"\", \"unknown\", \"n/a\", \"na\", \"none\", \"null\", \"tbd\", \"not provided\", \"not given\",\n  \"123 main st\", \"123 main street\", \"555-555-5555\", \"5555555555\", \"(555) 555-5555\",\n  \"john doe\", \"jane doe\", \"test\", \"example\",\n]);\nconst URGENCY = [\"emergency\", \"same_day\", \"routine\"];\n\n// A field counts only if a dispatcher could act on it. Nulls, blanks and\n// placeholders like \"unknown\" or \"123 Main St\" do not count.\nfunction captured(v) {\n  if (v === null || v === undefined) return false;\n  if (typeof v === \"string\") return !PLACEHOLDERS.has(v.trim().toLowerCase());\n  if (Array.isArray(v)) return v.length > 0;\n  if (typeof v === \"object\") return Object.values(v).some(captured);\n  return true;\n}\n\nfunction address(a) {\n  if (!a || typeof a !== \"object\") return \"(none)\";\n  const parts = [a.street, a.unit, a.city, a.state, a.postal_code].filter(captured);\n  return parts.length ? parts.join(\", \") : \"(none)\";\n}\n\nreturn $input.all().map((item) => {\n  // Accept the record as the whole request body, or wrapped as { \"record\": { ... } }.\n  const body = item.json.body ?? item.json;\n  const r = (body && body.record) ? body.record : (body || {});\n  const problems = [];\n\n  if (r.schema_version === undefined) {\n    problems.push(\"no schema_version, so this may not be an intake record at all\");\n  }\n  if (!URGENCY.includes(r.urgency)) {\n    problems.push(`urgency is ${JSON.stringify(r.urgency)}, expected one of: ${URGENCY.join(\", \")}`);\n  }\n  const reachable = captured(r.callback_number);\n  const locatable = captured(r.service_address);\n  if (!reachable) problems.push(\"no usable callback_number\");\n  if (!locatable) problems.push(\"no usable service_address\");\n  if (!captured(r.problem_summary)) problems.push(\"no problem_summary\");\n\n  const emergency = r.urgency === \"emergency\";\n  const unreachable = emergency && (!reachable || !locatable);\n\n  // Every emergency reaches a human now. An emergency nobody can act on is the worst case.\n  let severity = \"ok\";\n  if (emergency) severity = \"page\";\n  else if (problems.length) severity = \"review\";\n\n  const summary = captured(r.problem_summary) ? r.problem_summary : \"(no summary)\";\n  let alert_text;\n  if (unreachable) {\n    alert_text =\n      `[PAGE] EMERGENCY (${r.emergency_type || \"type not set\"}) with no way to act on it. ` +\n      `Missing: ${[!reachable && \"callback number\", !locatable && \"address\"].filter(Boolean).join(\" and \")}. ` +\n      `Pull the caller ID from your phone platform and call back now. Summary: ${summary}`;\n  } else if (emergency) {\n    alert_text =\n      `[PAGE] Emergency (${r.emergency_type || \"type not set\"}) at ${address(r.service_address)}. ` +\n      `Call back: ${r.callback_number}. Summary: ${summary}`;\n  } else if (severity === \"review\") {\n    alert_text = `[REVIEW] Intake record needs a human: ${problems.join(\"; \")}. Summary: ${summary}`;\n  } else {\n    alert_text = \"\";\n  }\n\n  return { json: { severity, unreachable, problems, alert_text, record: r } };\n});\n"
+      },
+      "id": "4d2d1952-05aa-4dbc-8a52-e3b4092ebc07",
+      "name": "Check record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ severity: $json.severity, problems: $json.problems }) }}",
+        "options": {}
+      },
+      "id": "a21f0970-c184-4d0e-8ca9-1adbb6f633e7",
+      "name": "Reply with result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "be6b2755-dd3a-4ac4-9a3f-d0bee90bfb44",
+              "leftValue": "={{ $json.severity }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7daf3e59-97dd-438c-9b00-52cbb824c9a9",
+      "name": "Needs a human?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/REPLACE/WITH/YOURS",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.alert_text }) }}",
+        "options": {}
+      },
+      "id": "94092f68-f882-4367-85a4-94ce2457e1c7",
+      "name": "Alert on-call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        -120
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "2534503b-7ae8-4bde-9d74-e24b73c09693",
+      "name": "Send to your CRM or sheet",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Intake record in": {
+      "main": [
+        [
+          {
+            "node": "Check record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check record": {
+      "main": [
+        [
+          {
+            "node": "Reply with result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply with result": {
+      "main": [
+        [
+          {
+            "node": "Needs a human?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs a human?": {
+      "main": [
+        [
+          {
+            "node": "Alert on-call",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send to your CRM or sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send to your CRM or sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
