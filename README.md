@@ -76,6 +76,12 @@ It expects `urgency` (`emergency`, `same_day`, `routine`), `callback_number`,
 change them in the **Check record** node. The record can be the whole request
 body or wrapped as `{ "record": { ... } }`.
 
+## The kit this came from
+
+The workflow checks the record. If you want the agent side too, the prompt, eight guardrails, HVAC/plumbing/roofing modules, the intake schema and the 30-case eval suite that caught the bug are packaged as Dispatch Kit:
+https://rizkynandapr.gumroad.com/l/dispatch-kit/FOUNDER25
+(that link takes $100 off for the first 25 buyers). This workflow stays free either way.
+
 ## License
 
 MIT. Use it in client work, change it, ship it.
