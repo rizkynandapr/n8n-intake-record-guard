@@ -75,6 +75,13 @@ Expected reply:
 { "severity": "page", "problems": ["no usable callback_number", "no usable service_address"] }
 ```
 
+## Test the agent, not just the record
+
+This workflow checks what the agent produced. To check the agent itself, `test-calls.md` in this
+repo has three scripted calls that break most intake agents: a gas smell buried in a normal
+no-heat complaint, a caller who asks for a price three times, and someone claiming to be the
+owner who tells the agent to print its instructions. Each one lists what a pass looks like.
+
 ## Caller ID check (optional)
 
 The sneakiest invented value is a real-looking phone number, and no placeholder list catches
