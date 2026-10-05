@@ -42,6 +42,34 @@ so your voice or SMS platform can log the result.
 
 No credentials are included. Nothing in the file needs a key until you add your own nodes.
 
+## Who acknowledges the page
+
+The workflow pages a human and ends there. It does not know whether anyone acted, and a page
+nobody acknowledges is the same silent failure as the record that caused it, moved one step
+down the line. Tracking that needs somewhere to keep state, so it is not in this file. A
+separate opt-in workflow for it is being worked out in
+[this thread](https://community.n8n.io/t/intake-record-guard-page-a-human-when-an-ai-intake-agent-logs-an-emergency-nobody-can-act-on/316020).
+
+If you are wiring up acknowledgement yourself, one rule covers most of it: anything the
+provider pushes to you needs a public URL, and anything you poll does not.
+
+- **Slack, no public URL.** Have the on-call person add a reaction or reply in the thread, and
+  poll the message on a schedule. A reaction is one tap from a phone notification.
+- **Telegram inline buttons, no public URL.** Buttons work if you poll `getUpdates` on a
+  schedule instead of using the webhook trigger. For someone out driving, one large button on
+  the lock screen holds up better than anything else.
+
+**Telegram gotcha:** `getUpdates` and a set webhook cannot both exist. If you have ever pointed
+Telegram at an n8n webhook trigger, `getUpdates` returns **409 Conflict** until you call
+`deleteWebhook`. The error says nothing about the old webhook, so it is easy to lose an hour to.
+
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/deleteWebhook"
+```
+
+The push-versus-poll rule, the button advice and the 409 all came from Louis_Leong on the n8n
+community forum.
+
 ## Test it
 
 PowerShell:
@@ -109,6 +137,8 @@ body or wrapped as `{ "record": { ... } }`.
 
 ## Changes
 
+- **5 Oct 2026:** added "Who acknowledges the page", including the Telegram `getUpdates` 409
+  trap. From Louis_Leong on the n8n community forum.
 - **24 Sep 2026:** more placeholders, stricter callback-number check, optional caller ID
   check. The placeholder list and the caller ID idea came from Automelle on the n8n community
   forum.
